@@ -1,4 +1,5 @@
 import sys
+import redis
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -6,6 +7,8 @@ import json
 import os
 import argparse
 from dotenv import load_dotenv
+
+cache = redis.Redis(host='localhost', port=6379, db=0)
 
 load_dotenv()
 
@@ -15,6 +18,7 @@ if not api_key:
     print("API key not found. Please set the VISUAL_CROSSING_API_KEY environment variable.")
     sys.exit(1)
 
+
 def fetch_data(url):
     try:
         with urllib.request.urlopen(url) as response:
@@ -22,6 +26,24 @@ def fetch_data(url):
             return data
     except urllib.error.HTTPError as e:
         print(f"HTTP error: {e.code} - {e.reason}")
+
+
+def fetch_data_with_cache(location):
+    cache_key = f"weather:{location}"
+    cached_data = cache.get(cache_key)
+
+    if cached_data:
+        print("✅ Using cached data.")
+        return cached_data.decode('utf-8')
+
+    url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{location}?unitGroup=metric&key={api_key}&contentType=json"
+    data = fetch_data(url)
+
+
+    if data:
+        cache.setex(cache_key, 3600, data)
+        print("🌐 Fetched from API and cached.")
+    return data
 
 
 parser = argparse.ArgumentParser(description="Fetch weather information for a specific city.")
@@ -36,14 +58,14 @@ if args.city:
         print("➡️  Example: 'Springfield,MO' or 'Orlando,US'")
         print("Proceeding anyway...\n")
     location = urllib.parse.quote(args.city)
+
 elif args.city_code:
     location = args.city_code 
 else:
     print("Please provide either a city name or a city code.")
     sys.exit(1)
 
-url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{location}?unitGroup=metric&key={api_key}&contentType=json"
-data = fetch_data(url)
+data = fetch_data_with_cache(location)
 
 try:
     json_data = json.loads(data)
