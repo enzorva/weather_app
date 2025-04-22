@@ -1,4 +1,5 @@
 import sys
+import time
 import redis
 import urllib.request
 import urllib.error
@@ -7,6 +8,7 @@ import json
 import os
 import argparse
 from dotenv import load_dotenv
+import socket
 
 cache = redis.Redis(host='localhost', port=6379, db=0)
 
@@ -19,13 +21,37 @@ if not api_key:
     sys.exit(1)
 
 
+def is_rate_limited(user_id, limit=5, period=60):
+    key = f"rate_limit:{user_id}"
+    now = int(time.time())
+
+    cache.zremrangebyscore(key, 0, now - period)
+
+    request_count = cache.zcard(key)
+
+    if request_count >= limit:
+        return True
+    
+    cache.zadd(key, {now: now})
+    cache.expire(key, period)
+    return False
+
+
 def fetch_data(url):
     try:
-        with urllib.request.urlopen(url) as response:
+        with urllib.request.urlopen(url, timeout=10) as response:
             data = response.read()
             return data
     except urllib.error.HTTPError as e:
         print(f"HTTP error: {e.code} - {e.reason}")
+    except urllib.error.URLError as e:
+        print(f"URL error: {e.reason}")
+    except socket.timeout:
+        print("Request time out. Please check your network connection and try again.")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+    
+    return None
 
 
 def fetch_data_with_cache(location):
@@ -63,6 +89,12 @@ elif args.city_code:
     location = args.city_code 
 else:
     print("Please provide either a city name or a city code.")
+    sys.exit(1)
+
+user_id = "default_user"
+
+if is_rate_limited(user_id):
+    print("⚠️ Rate limit exceeded. Please wait before making more requests.")
     sys.exit(1)
 
 data = fetch_data_with_cache(location)
